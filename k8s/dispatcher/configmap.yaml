@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dispatcher-config
+  namespace: default
+data:
+  MAX_QUEUE_DEPTH: "50"
+  NAMESPACE: "default"
+  POD_LABEL: "app=ml-replica"
+  REPLICA_PORT: "8080"

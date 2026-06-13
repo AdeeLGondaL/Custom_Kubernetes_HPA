@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-replica
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-replica
+  template:
+    metadata:
+      labels:
+        app: ml-replica
+    spec:
+      containers:
+        - name: ml-replica
+          image: ml-replica:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "1"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
