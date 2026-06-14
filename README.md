@@ -124,6 +124,8 @@ Expected output: **19 passed**.
 Useful for manual testing and development.
 
 **ML Replica** (starts on port 8080)
+
+Linux/macOS:
 ```bash
 cd ml_replica
 pip install -r requirements.txt
@@ -132,16 +134,36 @@ uvicorn app:app --host 0.0.0.0 --port 8080 --workers 1
 ```
 
 Test it:
+
+Linux/macOS:
 ```bash
 curl -X POST http://localhost:8080/infer -F "file=@load_tester/test_image.jpg"
 # {"class": "...", "confidence": 0.84}
 ```
 
+Windows (PowerShell):
+```powershell
+curl.exe -X POST http://localhost:8080/infer -F "file=@load_tester/test_image.jpg"
+# {"class": "...", "confidence": 0.84}
+```
+
+> Note: In PowerShell, `curl` is an alias for `Invoke-WebRequest` (different syntax). Use `curl.exe` to get the real curl binary.
+
 **Dispatcher** (starts on port 8081, K8s watch disabled)
+
+Linux/macOS:
 ```bash
 cd dispatcher
 pip install -r requirements.txt
 DISABLE_K8S_WATCH=1 uvicorn app:app --host 0.0.0.0 --port 8081 --workers 1
+```
+
+Windows (PowerShell):
+```powershell
+cd dispatcher
+pip install -r requirements.txt
+$env:DISABLE_K8S_WATCH="1"
+uvicorn app:app --host 0.0.0.0 --port 8081 --workers 1
 ```
 
 > The autoscaler requires a live Kubernetes cluster and Prometheus — it cannot run outside of Minikube.
@@ -161,21 +183,33 @@ minikube addons enable metrics-server
 
 ### Step 2 — Build images inside Minikube's Docker daemon
 
-This is the key step that makes images available to Minikube without a registry. You must run it in every new terminal session you use for building.
+Minikube runs its own Docker daemon. Pointing your shell at it lets you build images that Minikube can use directly — no registry needed.
 
-**Linux / macOS**
+> **Important:** This step only affects `docker build` commands. You only need to run it in the terminal where you're building images. All `kubectl` commands talk directly to the Kubernetes API and work in any terminal without this.
+
+Linux/macOS:
 ```bash
 eval $(minikube docker-env)
 ```
 
-**Windows (PowerShell)**
+Windows (PowerShell):
 ```powershell
 & minikube -p minikube docker-env | Invoke-Expression
 ```
 
-Verify: `docker info | grep Name` should show `minikube`.
+Verify it worked:
 
-Now build all three images:
+Linux/macOS:
+```bash
+docker info | grep Name   # should show: Name: minikube
+```
+
+Windows (PowerShell):
+```powershell
+docker info | Select-String "Name"   # should show: Name: minikube
+```
+
+Now build all three images in that same terminal:
 ```bash
 docker build -t ml-replica:latest ./ml_replica
 docker build -t dispatcher:latest  ./dispatcher
@@ -185,6 +219,8 @@ docker build -t autoscaler:latest  ./autoscaler
 > The ML Replica image takes ~5 minutes the first time (downloads the CPU PyTorch wheel, ~700 MB). Subsequent builds are fast due to layer caching.
 
 ### Step 3 — Apply RBAC and config
+
+These `kubectl` commands can be run in any terminal (no Docker env setup needed):
 
 ```bash
 kubectl apply -f k8s/autoscaler/serviceaccount.yaml
@@ -208,6 +244,8 @@ kubectl apply -f k8s/autoscaler/
 kubectl get pods -w
 ```
 
+> This can be run in any terminal — no Docker env needed. Press Ctrl+C once all pods show Running.
+
 Expected final state (takes ~60 s — the ML Replica loads ResNet18 weights at startup):
 ```
 NAME                          READY   STATUS    RESTARTS
@@ -216,18 +254,29 @@ dispatcher-xxx                1/1     Running   0
 ml-replica-xxx                1/1     Running   0
 ```
 
-### Step 6 — Smoke test
+### Step 6 — Expose the dispatcher and smoke test
+
+On Windows, Minikube runs inside Docker and its network is not directly reachable from your machine. `minikube service --url` creates a temporary tunnel — but the URL only works while that process is running (it dies on Ctrl+C). Use `kubectl port-forward` instead, which gives you a stable `localhost` URL that you control.
+
+**Open a dedicated terminal and keep it running for the rest of the session:**
 
 ```bash
-# Linux/macOS
-DISPATCHER_URL=$(minikube service dispatcher-service --url)
-
-# Windows PowerShell
-$DISPATCHER_URL = minikube service dispatcher-service --url
+kubectl port-forward svc/dispatcher-service 8080:8080
 ```
 
+Leave that terminal open. Your dispatcher is now reachable at `http://localhost:8080`.
+
+**In a separate terminal**, run the smoke test:
+
+Linux/macOS:
 ```bash
-curl -X POST "$DISPATCHER_URL/infer" -F "file=@load_tester/test_image.jpg"
+curl -X POST http://localhost:8080/infer -F "file=@load_tester/test_image.jpg"
+# {"class": "golden retriever", "confidence": 0.84}
+```
+
+Windows (PowerShell):
+```powershell
+curl.exe -X POST http://localhost:8080/infer -F "file=@load_tester/test_image.jpg"
 # {"class": "golden retriever", "confidence": 0.84}
 ```
 
@@ -252,14 +301,16 @@ kubectl get pods -l "release=prometheus" -w
 
 ### Verify scraping
 
+Open a dedicated terminal and keep it running:
 ```bash
 kubectl port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090
 ```
 
-Open `http://localhost:9090/targets` — both `dispatcher` and `ml-replicas` should show **State: UP**.
+Open `http://localhost:9090/targets` in a browser — both `dispatcher` and `ml-replicas` should show **State: UP**.
 
 ### Open Grafana
 
+Open another dedicated terminal and keep it running:
 ```bash
 kubectl port-forward svc/prometheus-grafana 3000:80
 ```
@@ -288,10 +339,10 @@ The comparison metric is **p99 latency + replica count** over time.
 
 ```bash
 # Workload-file mode (recommended for the experiment — uses workload.txt)
-python load_tester.py --url $DISPATCHER_URL --workload ../workload.txt --image test_image.jpg
+python load_tester.py --url http://localhost:8080/infer --workload ../workload.txt --image test_image.jpg
 
 # Fixed-rate mode (useful for quick smoke tests)
-python load_tester.py --url $DISPATCHER_URL --rate 20 --duration 60 --image test_image.jpg
+python load_tester.py --url http://localhost:8080/infer --rate 20 --duration 60 --image test_image.jpg
 ```
 
 In workload-file mode, the tester prints a progress line every 30 seconds so you can see it is running:
@@ -304,13 +355,7 @@ Workload: 600 seconds  peak=44 req/s  avg=18.3 req/s  total≈10980 requests
 
 ### Setup
 
-```bash
-# Linux/macOS
-DISPATCHER_URL=$(minikube service dispatcher-service --url)/infer
-
-# Windows PowerShell
-$DISPATCHER_URL = "$(minikube service dispatcher-service --url)/infer"
-```
+Make sure the dispatcher port-forward from Step 6 is still running in its terminal. The dispatcher URL is `http://localhost:8080/infer` for all platforms.
 
 ### Run 1 — Custom autoscaler
 
@@ -320,7 +365,7 @@ kubectl delete hpa ml-replica-hpa --ignore-not-found
 kubectl get pods -l app=autoscaler   # should show Running
 
 cd load_tester
-python load_tester.py --url $DISPATCHER_URL --workload ../workload.txt --image test_image.jpg
+python load_tester.py --url http://localhost:8080/infer --workload ../workload.txt --image test_image.jpg
 ```
 
 Export the Grafana time-series screenshot. Label it **Run 1 — Custom**.
@@ -339,7 +384,7 @@ kubectl scale deployment autoscaler --replicas=0
 kubectl apply -f k8s/hpa/hpa-70.yaml
 kubectl get hpa -w   # wait ~30s for HPA to initialise
 
-python load_tester.py --url $DISPATCHER_URL --workload ../workload.txt --image test_image.jpg
+python load_tester.py --url http://localhost:8080/infer --workload ../workload.txt --image test_image.jpg
 ```
 
 Export screenshot. Label it **Run 2 — HPA 70%**.
@@ -356,7 +401,7 @@ kubectl scale deployment ml-replica --replicas=1
 kubectl apply -f k8s/hpa/hpa-90.yaml
 kubectl get hpa -w
 
-python load_tester.py --url $DISPATCHER_URL --workload ../workload.txt --image test_image.jpg
+python load_tester.py --url http://localhost:8080/infer --workload ../workload.txt --image test_image.jpg
 ```
 
 Export screenshot. Label it **Run 3 — HPA 90%**.
