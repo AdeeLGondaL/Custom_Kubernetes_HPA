@@ -69,7 +69,7 @@ async def startup():
 
 async def _watch_pods():
     from kubernetes_asyncio import client as k8s, config, watch
-    await config.load_incluster_config()
+    config.load_incluster_config()
     v1 = k8s.CoreV1Api()
     w  = watch.Watch()
     async for event in w.stream(v1.list_namespaced_pod,
