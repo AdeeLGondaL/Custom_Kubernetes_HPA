@@ -5,9 +5,9 @@ metadata:
   namespace: default
 data:
   TARGET_UTILIZATION: "0.7"
-  MIN_REPLICAS: "1"
+  MIN_REPLICAS: "2"
   MAX_REPLICAS: "10"
-  SCALE_UP_COOLDOWN: "30"
+  SCALE_UP_COOLDOWN: "15"
   SCALE_DOWN_COOLDOWN: "180"
   POLL_INTERVAL: "15"
   DEPLOYMENT: "ml-replica"

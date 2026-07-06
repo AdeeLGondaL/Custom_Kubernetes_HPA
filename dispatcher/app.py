@@ -59,6 +59,12 @@ async def _release_replica(ip: str):
         await free_queue.put(ip)
 
 
+def _mark_replica_unavailable(ip: str):
+    _in_use.discard(ip)
+    valid_ips.discard(ip)
+    _active_replicas.set(len(valid_ips))
+
+
 @app.on_event("startup")
 async def startup():
     if free_queue is None:
@@ -69,7 +75,7 @@ async def startup():
 
 async def _watch_pods():
     from kubernetes_asyncio import client as k8s, config, watch
-    await config.load_incluster_config()
+    config.load_incluster_config()
     v1 = k8s.CoreV1Api()
     w  = watch.Watch()
     async for event in w.stream(v1.list_namespaced_pod,
@@ -105,16 +111,26 @@ async def infer(file: UploadFile = File(...)):
     replica_ip = None
 
     try:
-        replica_ip  = await _get_free_replica()
         image_bytes = await file.read()
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"http://{replica_ip}:{REPLICA_PORT}/infer",
-                files={"file": ("image.jpg", image_bytes, "image/jpeg")},
-            )
-        _duration.observe(time.perf_counter() - t_start)
-        return Response(content=resp.content, status_code=resp.status_code,
-                        media_type="application/json")
+        attempts = max(1, min(3, len(valid_ips)))
+
+        for _ in range(attempts):
+            replica_ip = await _get_free_replica()
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"http://{replica_ip}:{REPLICA_PORT}/infer",
+                        files={"file": ("image.jpg", image_bytes, "image/jpeg")},
+                    )
+                _duration.observe(time.perf_counter() - t_start)
+                return Response(content=resp.content, status_code=resp.status_code,
+                                media_type="application/json")
+            except httpx.RequestError:
+                _mark_replica_unavailable(replica_ip)
+                replica_ip = None
+
+        _dropped.inc()
+        return Response(status_code=503, content="No reachable replica")
     finally:
         if replica_ip is not None:
             await _release_replica(replica_ip)

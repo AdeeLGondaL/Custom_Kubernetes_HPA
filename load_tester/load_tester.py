@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from collections import Counter
 import time
 import httpx
 
@@ -19,6 +20,20 @@ def _print_summary(results: list):
 
     print(f"\nTotal: {len(results)}  Success: {len(successes)}  "
           f"Fail: {len(failures)}  Error: {len(errors)}")
+
+    if failures:
+        failure_counts = Counter(r["status"] for r in failures)
+        print("Failures by HTTP status: "
+              + ", ".join(f"{status}={count}"
+                          for status, count in sorted(failure_counts.items())))
+
+    if errors:
+        error_counts = Counter(type(e).__name__ for e in errors)
+        print("Errors by exception type: "
+              + ", ".join(f"{name}={count}"
+                          for name, count in sorted(error_counts.items())))
+        for error in errors[:3]:
+            print(f"  sample {type(error).__name__}: {error}")
 
     if successes:
         lat = sorted(r["latency"] for r in successes)

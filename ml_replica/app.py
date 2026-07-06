@@ -1,9 +1,13 @@
 import io
+import os
 import time
 import torch
 from fastapi import FastAPI, File, UploadFile
 from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 from PIL import Image
+
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 
 app = FastAPI()
 app.mount("/metrics", make_asgi_app())
@@ -18,6 +22,7 @@ inference_duration   = Histogram(
 model     = None
 labels    = None
 transform = None
+WARMUP_RUNS = int(os.environ.get("WARMUP_RUNS", "3"))
 
 
 def _load_model():
@@ -33,10 +38,20 @@ def _load_model():
     return m, weights.meta["categories"], t
 
 
+def _warmup_model(m, runs: int = WARMUP_RUNS):
+    if runs <= 0:
+        return
+    dummy = torch.zeros(1, 3, 224, 224)
+    with torch.inference_mode():
+        for _ in range(runs):
+            m(dummy)
+
+
 @app.on_event("startup")
 async def startup():
     global model, labels, transform
     model, labels, transform = _load_model()
+    _warmup_model(model)
 
 
 @app.post("/infer")
@@ -47,7 +62,7 @@ async def infer(file: UploadFile = File(...)):
         image_bytes = await file.read()
         image       = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         tensor      = transform(image).unsqueeze(0)
-        with torch.no_grad():
+        with torch.inference_mode():
             output     = model(tensor)
             class_idx  = int(output.argmax(dim=1))
             confidence = float(torch.softmax(output, dim=1)[0, class_idx])
